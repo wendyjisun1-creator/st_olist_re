@@ -14,41 +14,32 @@ st.set_page_config(page_title="Olist 통합 분석 대시보드", layout="wide")
 def load_all_combined_data():
     # 데이터 폴더 후보군 (로컬 및 클라우드 환경)
     possible_paths = [
-        r'c:\fcicb6\data\OLIST_V.2\DATA_PARQUET', # 로컬 파케
-        os.path.join(os.path.dirname(__file__), 'DATA_PARQUET'), # 클라우드 파케 폴더
-        os.path.join(os.path.dirname(__file__), 'data'), # 'data' 폴더 내
-        os.path.dirname(__file__), # 루트 폴더
-        r'c:\fcicb6\data\OLIST_V.2\DATA_REV.2', # 로컬 원본 (CSV)
+        r'c:\fcicb6\data\OLIST_V.2\DATA_PARQUET',
+        os.path.join(os.path.dirname(__file__), 'DATA_PARQUET'),
+        os.path.join(os.path.dirname(__file__), 'data'),
+        os.path.dirname(__file__),
+        r'c:\fcicb6\data\OLIST_V.2\DATA_REV.2',
     ]
     
     base_path = None
-    ext = None
-    
-    # 1. Parquet 파일 확인
+    # 핵심 파일(orders)이 있는 경로를 base_path로 설정
     for p in possible_paths:
-        if os.path.exists(p) and os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.parquet')):
-            base_path = p
-            ext = '.parquet'
-            break
-            
-    # 2. CSV 확인 (Parquet 없으면)
-    if not base_path:
-        for p in possible_paths:
-            if os.path.exists(p) and os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.csv')):
+        if os.path.exists(p):
+            if os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.parquet')) or \
+               os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.csv')):
                 base_path = p
-                ext = '.csv'
                 break
                 
     if not base_path:
-        st.error("데이터 파일을 찾을 수 없습니다. 파케(Parquet) 또는 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
+        st.error("핵심 데이터 파일(orders)을 찾을 수 없습니다. 파일이 서버에 올바르게 업로드되었는지 확인해주세요.")
         st.stop()
     
     def read_df(name):
-        full_path = os.path.join(base_path, f'{name}{ext}')
-        if ext == '.parquet':
-            return pd.read_parquet(full_path)
-        else:
-            return pd.read_csv(full_path)
+        pq_f = os.path.join(base_path, f'{name}.parquet')
+        csv_f = os.path.join(base_path, f'{name}.csv')
+        if os.path.exists(pq_f): return pd.read_parquet(pq_f)
+        if os.path.exists(csv_f): return pd.read_csv(csv_f)
+        return pd.DataFrame() # 파일이 없으면 빈 DF 반환
 
     # 데이터 로딩
     orders = read_df('proc_olist_orders_dataset')
@@ -57,6 +48,10 @@ def load_all_combined_data():
     payments = read_df('proc_olist_order_payments_dataset')
     customers = read_df('proc_olist_customers_dataset')
     products = read_df('proc_olist_products_dataset')
+    
+    if orders.empty or items.empty:
+        st.error("주문 또는 아이템 데이터가 누락되었습니다.")
+        st.stop()
     
     # 시간 데이터 변환
     date_cols = [
@@ -80,7 +75,11 @@ def load_all_combined_data():
     df = orders.merge(items, on='order_id', how='inner')
     df = df.merge(reviews[['order_id', 'review_score']], on='order_id', how='left')
     df = df.merge(customers[['customer_id', 'customer_unique_id']], on='customer_id', how='inner')
-    df = df.merge(products[['product_id', 'product_category_name_english']], on='product_id', how='left')
+    
+    if not products.empty:
+        df = df.merge(products[['product_id', 'product_category_name_english']], on='product_id', how='left')
+    else:
+        df['product_category_name_english'] = 'Unknown (File Missing)'
     
     # 리뷰 그룹 생성
     df['review_group'] = df['review_score'].apply(lambda x: 'High (4-5)' if x >= 4 else ('Low (1-3)' if x >= 1 else 'None'))
