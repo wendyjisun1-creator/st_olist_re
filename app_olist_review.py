@@ -11,34 +11,52 @@ st.set_page_config(page_title="Olist 리뷰 분석 대시보드", layout="wide")
 # 데이터 로드 함수 (캐싱 사용)
 @st.cache_data
 def load_data():
-    base_path = r'c:\fcicb6\data\OLIST_V.2\DATA_REV.2'
+    # 데이터 경로 설정
+    pq_path = r'c:\fcicb6\data\OLIST_V.2\DATA_PARQUET'
+    local_path = r'c:\fcicb6\data\OLIST_V.2\DATA_REV.2'
     
+    # 1. Parquet 경로 우선 탐색, 없으면 CSV 경로 혹은 상대 경로 사용
+    if os.path.exists(pq_path):
+        base_path = pq_path
+        ext = '.parquet'
+    elif os.path.exists(local_path):
+        base_path = local_path
+        ext = '.csv'
+    else:
+        # 클라우드 환경 대응
+        base_path = os.path.join(os.path.dirname(__file__), 'DATA_PARQUET')
+        ext = '.parquet'
+        if not os.path.exists(base_path):
+            base_path = os.path.join(os.path.dirname(__file__), 'DATA_REV.2')
+            ext = '.csv'
+    
+    def read_df(name):
+        full_path = os.path.join(base_path, f'{name}{ext}')
+        return pd.read_parquet(full_path) if ext == '.parquet' else pd.read_csv(full_path)
+
     # 데이터 읽기
-    orders = pd.read_csv(os.path.join(base_path, 'proc_olist_orders_dataset.csv'))
-    items = pd.read_csv(os.path.join(base_path, 'proc_olist_order_items_dataset.csv'))
-    reviews = pd.read_csv(os.path.join(base_path, 'proc_olist_order_reviews_dataset.csv'))
-    payments = pd.read_csv(os.path.join(base_path, 'proc_olist_order_payments_dataset.csv'))
-    customers = pd.read_csv(os.path.join(base_path, 'proc_olist_customers_dataset.csv'))
+    orders = read_df('proc_olist_orders_dataset')
+    items = read_df('proc_olist_order_items_dataset')
+    reviews = read_df('proc_olist_order_reviews_dataset')
+    payments = read_df('proc_olist_order_payments_dataset')
+    customers = read_df('proc_olist_customers_dataset')
     
-    # 시간 데이터 변환 (있을 경우)
+    # 시간 데이터 변환 (Parquet은 이미 타입이 보존될 수 있으나 안전을 위해 체크)
     date_cols = [
         'order_purchase_timestamp', 'order_approved_at', 
         'order_delivered_carrier_date', 'order_delivered_customer_date', 
         'order_estimated_delivery_date'
     ]
     for col in date_cols:
-        if col in orders.columns:
+        if col in orders.columns and not pd.api.types.is_datetime64_any_dtype(orders[col]):
             orders[col] = pd.to_datetime(orders[col])
             
     # 1. 전처리: delay_days 계산 및 배송 기간 계산
-    # 배송 완료된 주문만 대상으로 지연 일수 계산
+    # 배송 완료된 주문만 대상으로 지연 일수 계산 (NaT 처리 포함)
     orders['delay_days'] = (orders['order_delivered_customer_date'] - orders['order_estimated_delivery_date']).dt.days
-    # 전체 배송 기간 (구매 ~ 배송완료)
     orders['shipping_duration'] = (orders['order_delivered_customer_date'] - orders['order_purchase_timestamp']).dt.days
     
     # 2. 전처리: 배송비 비중 (freight_ratio)
-    # 아이템별 배송비 비중 계산 후 주문번호별 평균 혹은 합계 사용? 
-    # 여기서는 주문당 평균 배송비 비중으로 계산
     items['freight_ratio'] = items['freight_value'] / items['price']
     order_items_summary = items.groupby('order_id').agg({
         'price': 'sum',
@@ -46,10 +64,7 @@ def load_data():
         'freight_ratio': 'mean'
     }).reset_index()
     
-    # 3. 전처리: 결제 수단 집계 (주문당 주 결제 수단 혹은 비중)
-    # 여기서는 주문당 결제 수단별 건수 집계를 위해 merge 전 payments 활용
-    
-    # 4. 데이터 병합
+    # 3. 데이터 병합
     df = orders.merge(reviews[['order_id', 'review_score']], on='order_id', how='inner')
     df = df.merge(order_items_summary, on='order_id', how='inner')
     df = df.merge(customers[['customer_id', 'customer_unique_id']], on='customer_id', how='inner')
@@ -57,8 +72,7 @@ def load_data():
     # 리뷰 그룹 생성
     df['review_group'] = df['review_score'].apply(lambda x: 'High (4-5)' if x >= 4 else 'Low (1-3)')
     
-    # 5. RFM 계산
-    # Recency: 기준일(최근 구매일 + 1) - 최근 구매일
+    # 4. RFM 계산
     reference_date = df['order_purchase_timestamp'].max() + pd.Timedelta(days=1)
     rfm = df.groupby('customer_unique_id').agg({
         'order_purchase_timestamp': lambda x: (reference_date - x.max()).days,
@@ -70,12 +84,11 @@ def load_data():
         'price': 'Monetary'
     })
     
-    # RFM 점수 (1-5점 사이로 구분)
+    # RFM 점수
     rfm['R_Score'] = pd.qcut(rfm['Recency'], 5, labels=[5, 4, 3, 2, 1])
     rfm['F_Score'] = rfm['Frequency'].rank(method='first').transform(lambda x: pd.qcut(x, 5, labels=[1, 2, 3, 4, 5]))
     rfm['M_Score'] = pd.qcut(rfm['Monetary'], 5, labels=[1, 2, 3, 4, 5])
     
-    # 간단한 세그먼트 분류
     def segment_customer(row):
         score = int(row['R_Score']) + int(row['F_Score']) + int(row['M_Score'])
         if score >= 13: return 'VIP'
@@ -84,8 +97,6 @@ def load_data():
         else: return 'At Risk'
         
     rfm['RFM_Segment'] = rfm.apply(segment_customer, axis=1)
-    
-    # 메인 데이터에 RFM 세그먼트 병합
     df = df.merge(rfm[['RFM_Segment']], on='customer_unique_id', how='left')
     
     return df, payments
