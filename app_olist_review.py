@@ -11,28 +11,43 @@ st.set_page_config(page_title="Olist 리뷰 분석 대시보드", layout="wide")
 # 데이터 로드 함수 (캐싱 사용)
 @st.cache_data
 def load_data():
-    # 데이터 경로 설정
-    pq_path = r'c:\fcicb6\data\OLIST_V.2\DATA_PARQUET'
-    local_path = r'c:\fcicb6\data\OLIST_V.2\DATA_REV.2'
+    # 데이터 폴더 후보군 (로컬 및 클라우드 환경)
+    possible_paths = [
+        r'c:\fcicb6\data\OLIST_V.2\DATA_PARQUET', # 로컬 파케
+        os.path.join(os.path.dirname(__file__), 'DATA_PARQUET'), # 클라우드 파케 폴더
+        os.path.join(os.path.dirname(__file__), 'data'), # 'data' 폴더 내
+        os.path.dirname(__file__), # 루트 폴더
+        r'c:\fcicb6\data\OLIST_V.2\DATA_REV.2', # 로컬 원본 (CSV)
+    ]
     
-    # 1. Parquet 경로 우선 탐색, 없으면 CSV 경로 혹은 상대 경로 사용
-    if os.path.exists(pq_path):
-        base_path = pq_path
-        ext = '.parquet'
-    elif os.path.exists(local_path):
-        base_path = local_path
-        ext = '.csv'
-    else:
-        # 클라우드 환경 대응
-        base_path = os.path.join(os.path.dirname(__file__), 'DATA_PARQUET')
-        ext = '.parquet'
-        if not os.path.exists(base_path):
-            base_path = os.path.join(os.path.dirname(__file__), 'DATA_REV.2')
-            ext = '.csv'
+    base_path = None
+    ext = None
+    
+    # 1. Parquet 파일이 있는지 먼저 확인
+    for p in possible_paths:
+        if os.path.exists(p) and os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.parquet')):
+            base_path = p
+            ext = '.parquet'
+            break
+            
+    # 2. Parquet이 없으면 CSV 확인
+    if not base_path:
+        for p in possible_paths:
+            if os.path.exists(p) and os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.csv')):
+                base_path = p
+                ext = '.csv'
+                break
+                
+    if not base_path:
+        st.error("데이터 파일을 찾을 수 없습니다. 'DATA_PARQUET' 폴더 또는 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
+        st.stop()
     
     def read_df(name):
         full_path = os.path.join(base_path, f'{name}{ext}')
-        return pd.read_parquet(full_path) if ext == '.parquet' else pd.read_csv(full_path)
+        if ext == '.parquet':
+            return pd.read_parquet(full_path)
+        else:
+            return pd.read_csv(full_path)
 
     # 데이터 읽기
     orders = read_df('proc_olist_orders_dataset')
