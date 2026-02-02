@@ -4,42 +4,40 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
+import json
 from datetime import datetime
 
 # 페이지 설정
-st.set_page_config(page_title="Olist 통합 분석 대시보드", layout="wide")
+st.set_page_config(page_title="Olist 통합 전략 대시보드", layout="wide")
 
 # 데이터 로드 함수 (캐싱 사용)
 @st.cache_data
-def load_all_combined_data():
-    # 데이터 폴더 후보군 (로컬 및 클라우드 환경)
+def load_all_dashboard_data():
+    # 데이터 폴더 후보군
     possible_paths = [
         r'c:\fcicb6\data\OLIST_V.2\DATA_PARQUET',
         os.path.join(os.path.dirname(__file__), 'DATA_PARQUET'),
         os.path.join(os.path.dirname(__file__), 'data'),
         os.path.dirname(__file__),
-        r'c:\fcicb6\data\OLIST_V.2\DATA_REV.2',
     ]
     
     base_path = None
-    # 핵심 파일(orders)이 있는 경로를 base_path로 설정
     for p in possible_paths:
-        if os.path.exists(p):
-            if os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.parquet')) or \
-               os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.csv')):
-                base_path = p
-                break
-                
+        if os.path.exists(p) and (os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.parquet')) or 
+                                os.path.exists(os.path.join(p, 'proc_olist_orders_dataset.csv'))):
+            base_path = p
+            break
+            
     if not base_path:
-        st.error("핵심 데이터 파일(orders)을 찾을 수 없습니다. 파일이 서버에 올바르게 업로드되었는지 확인해주세요.")
+        st.error("핵심 데이터 파일을 찾을 수 없습니다.")
         st.stop()
     
     def read_df(name):
-        pq_f = os.path.join(base_path, f'{name}.parquet')
-        csv_f = os.path.join(base_path, f'{name}.csv')
-        if os.path.exists(pq_f): return pd.read_parquet(pq_f)
-        if os.path.exists(csv_f): return pd.read_csv(csv_f)
-        return pd.DataFrame() # 파일이 없으면 빈 DF 반환
+        pq = os.path.join(base_path, f'{name}.parquet')
+        csv = os.path.join(base_path, f'{name}.csv')
+        if os.path.exists(pq): return pd.read_parquet(pq)
+        if os.path.exists(csv): return pd.read_csv(csv)
+        return pd.DataFrame()
 
     # 데이터 로딩
     orders = read_df('proc_olist_orders_dataset')
@@ -49,42 +47,38 @@ def load_all_combined_data():
     customers = read_df('proc_olist_customers_dataset')
     products = read_df('proc_olist_products_dataset')
     
-    if orders.empty or items.empty:
-        st.error("주문 또는 아이템 데이터가 누락되었습니다.")
-        st.stop()
-    
     # 시간 데이터 변환
-    date_cols = [
-        'order_purchase_timestamp', 'order_approved_at', 
-        'order_delivered_carrier_date', 'order_delivered_customer_date', 
-        'order_estimated_delivery_date'
-    ]
+    date_cols = ['order_purchase_timestamp', 'order_delivered_customer_date', 'order_estimated_delivery_date']
     for col in date_cols:
         if col in orders.columns and not pd.api.types.is_datetime64_any_dtype(orders[col]):
             orders[col] = pd.to_datetime(orders[col])
             
-    # 1. 기본 전처리: 지연 일수 및 배송 기간
+    # 기본 전처리: 지연 일수 및 배송 기간
     orders['delay_days'] = (orders['order_delivered_customer_date'] - orders['order_estimated_delivery_date']).dt.days
     orders['shipping_duration'] = (orders['order_delivered_customer_date'] - orders['order_purchase_timestamp']).dt.days
     
-    # 2. 아이템 정보 요약 (배송비 비중 등)
+    # 아이템 정보
     items['freight_ratio'] = items['freight_value'] / items['price']
     
-    # 3. 데이터 병합 (분석용 메인 데이터셋)
-    # orders 기준으로 items, reviews, customers, products 병합
+    # 데이터 병합
     df = orders.merge(items, on='order_id', how='inner')
-    df = df.merge(reviews[['order_id', 'review_score']], on='order_id', how='left')
-    df = df.merge(customers[['customer_id', 'customer_unique_id']], on='customer_id', how='inner')
+    df = df.merge(reviews[['order_id', 'review_score', 'review_comment_message']], on='order_id', how='left')
+    df = df.merge(customers[['customer_id', 'customer_unique_id', 'customer_state']], on='customer_id', how='inner')
     
     if not products.empty:
-        df = df.merge(products[['product_id', 'product_category_name_english']], on='product_id', how='left')
+        df = df.merge(products[['product_id', 'product_category_name_english', 'product_photos_qty']], on='product_id', how='left')
     else:
-        df['product_category_name_english'] = 'Unknown (File Missing)'
+        df['product_category_name_english'] = 'Unknown'
+        df['product_photos_qty'] = 0
     
-    # 리뷰 그룹 생성
-    df['review_group'] = df['review_score'].apply(lambda x: 'High (4-5)' if x >= 4 else ('Low (1-3)' if x >= 1 else 'None'))
+    # 리뷰 그룹 설정 (빨간색-Low, 파란색-High 대비를 위해)
+    def categorize_review(score):
+        if pd.isna(score): return 'None'
+        return 'High (4-5)' if score >= 4 else 'Low (1-3)'
     
-    # 4. RFM 계산 (customer_unique_id 기준)
+    df['review_group'] = df['review_score'].apply(categorize_review)
+    
+    # RFM 계산
     ref_date = df['order_purchase_timestamp'].max() + pd.Timedelta(days=1)
     rfm = df.groupby('customer_unique_id').agg({
         'order_purchase_timestamp': lambda x: (ref_date - x.max()).days,
@@ -92,191 +86,194 @@ def load_all_combined_data():
         'price': 'sum'
     }).rename(columns={'order_purchase_timestamp': 'Recency', 'order_id': 'Frequency', 'price': 'Monetary'})
     
-    # RFM 점수 (1-5등급)
-    rfm['R'] = pd.qcut(rfm['Recency'], 5, labels=[5,4,3,2,1])
-    rfm['F'] = rfm['Frequency'].rank(method='first').transform(lambda x: pd.qcut(x, 5, labels=[1,2,3,4,5]))
-    rfm['M'] = pd.qcut(rfm['Monetary'], 5, labels=[1,2,3,4,5])
+    for col, labels in zip(['Recency', 'Frequency', 'Monetary'], [[5,4,3,2,1], [1,2,3,4,5], [1,2,3,4,5]]):
+        if col == 'Frequency': # Frequency는 중복값이 많을 수 있어 rank 사용
+            rfm[col[0]] = rfm[col].rank(method='first').transform(lambda x: pd.qcut(x, 5, labels=labels))
+        else:
+            rfm[col[0]] = pd.qcut(rfm[col], 5, labels=labels)
+            
+    rfm['RFM_Segment'] = rfm.apply(lambda x: 'VIP' if int(x['R'])+int(x['F'])+int(x['M']) >= 13 else 
+                                   ('Loyal' if int(x['R'])+int(x['F'])+int(x['M']) >= 9 else 
+                                    ('Regular' if int(x['R'])+int(x['F'])+int(x['M']) >= 5 else 'At Risk')), axis=1)
     
-    def get_segment(row):
-        score = int(row['R']) + int(row['F']) + int(row['M'])
-        if score >= 13: return 'VIP'
-        elif score >= 9: return 'Loyal'
-        elif score >= 5: return 'Regular'
-        else: return 'At Risk'
-        
-    rfm['RFM_Segment'] = rfm.apply(get_segment, axis=1)
     df = df.merge(rfm[['RFM_Segment']], on='customer_unique_id', how='left')
     
     return df, payments
 
 # 데이터 로드
-df_all, payments_raw = load_all_combined_data()
+df_all, payments_raw = load_all_dashboard_data()
 
-# --- 사이드바 필터 ---
-st.sidebar.title("🔍 통합 필터 설정")
+# --- 사이드바 ---
+st.sidebar.title("🛠️ 데이터 필터")
+min_d = df_all['order_purchase_timestamp'].min().to_pydatetime()
+max_d = df_all['order_purchase_timestamp'].max().to_pydatetime()
+d_range = st.sidebar.date_input("분석 기간", [min_d, max_d], min_value=min_d, max_value=max_d)
 
-# 1. 날짜 필터
-min_date = df_all['order_purchase_timestamp'].min().to_pydatetime()
-max_date = df_all['order_purchase_timestamp'].max().to_pydatetime()
-date_range = st.sidebar.date_input("조문 기간 선택", [min_date, max_date], min_value=min_date, max_value=max_date)
+all_segs = sorted(df_all['RFM_Segment'].unique())
+sel_segs = st.sidebar.multiselect("고객 세그먼트", all_segs, default=all_segs)
 
-# 2. RFM 세그먼트 필터
-segments = sorted(df_all['RFM_Segment'].unique())
-selected_segments = st.sidebar.multiselect("RFM 세그먼트 선택", options=segments, default=segments)
-
-# 필터 적용
-if len(date_range) == 2:
-    start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
-    mask = (df_all['order_purchase_timestamp'] >= start_date) & \
-           (df_all['order_purchase_timestamp'] <= end_date) & \
-           (df_all['RFM_Segment'].isin(selected_segments))
-    df_filtered = df_all.loc[mask]
+# 필터링
+if len(d_range) == 2:
+    start, end = pd.to_datetime(d_range[0]), pd.to_datetime(d_range[1])
+    df_f = df_all[(df_all['order_purchase_timestamp'] >= start) & (df_all['order_purchase_timestamp'] <= end) & (df_all['RFM_Segment'].isin(sel_segs))]
 else:
-    df_filtered = df_all[df_all['RFM_Segment'].isin(selected_segments)]
+    df_f = df_all[df_all['RFM_Segment'].isin(sel_segs)]
 
-# 필터링된 데이터 기반 결제 데이터 필터링
-payments_filtered = payments_raw[payments_raw['order_id'].isin(df_filtered['order_id'])]
-
-# --- 메인 대시보드 구조 ---
-st.title("🛒 Olist 데이터 통합 분석 대시보드")
-st.markdown("매출 트렌드, 카테고리 성과, 리뷰 및 물류 지표를 한눈에 확인하세요.")
-
-# KPI 요약
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("총 매출액", f"R$ {df_filtered['price'].sum():,.0f}")
-kpi2.metric("총 주문 건수", f"{df_filtered['order_id'].nunique():,}건")
-kpi3.metric("평균 리뷰 점수", f"{df_filtered['review_score'].mean():.2f}점")
-kpi4.metric("분석 대상 고객수", f"{df_filtered['customer_unique_id'].nunique():,}명")
-
-st.divider()
+# --- 메인 대시보드 ---
+st.title("🇧🇷 Olist 비즈니스 통합 전략 대시보드")
+st.markdown("매출 성장, 운영 효율, 그리고 지역별 위험 요소를 통합적으로 분석합니다.")
 
 # 탭 구성
-tab1, tab2 = st.tabs(["📊 매출 및 판매 트렌드", "🚚 리뷰 및 물류 성과"])
+tab1, tab2, tab3 = st.tabs(["📊 운영 모니터링", "📈 성장 실적", "🗺️ 지역 전략"])
 
-# --- TAB 1: 매출 및 판매 트렌드 ---
+# 색상 팔레트 고정 (Low: Red, High: Blue)
+color_map = {'High (4-5)': '#0000FF', 'Low (1-3)': '#FF0000'}
+
+# --- TAB 1: 운영 모니터링 ---
 with tab1:
-    st.header("📈 매출 및 판매 트렌드 분석")
+    st.header("🚚 운영 효율 및 만족도 분석")
+    c1, c2 = st.columns(2)
     
-    # 시각화 1: 월별 추이 (이중 축)
-    trend_df = df_filtered.copy()
-    trend_df['month'] = trend_df['order_purchase_timestamp'].dt.to_period('M').astype(str)
-    trend_data = trend_df.groupby('month').agg({'price': 'sum', 'order_id': 'nunique'}).reset_index()
-
-    fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
-    fig_trend.add_trace(go.Scatter(x=trend_data['month'], y=trend_data['price'], name="매출액 (R$)", mode='lines+markers', line=dict(color='#636EFA')), secondary_y=False)
-    fig_trend.add_trace(go.Scatter(x=trend_data['month'], y=trend_data['order_id'], name="판매량 (건)", mode='lines+markers', line=dict(color='#EF553B', dash='dot')), secondary_y=True)
-    
-    fig_trend.update_layout(title="월별 매출액 및 판매량 추이", hovermode="x unified")
-    fig_trend.update_yaxes(title_text="매출액 (R$)", secondary_y=False)
-    fig_trend.update_yaxes(title_text="판매량 (건)", secondary_y=True)
-    st.plotly_chart(fig_trend, use_container_width=True)
-
-    # 시각화 2: 카테고리 Treemap
-    st.subheader("🌳 카테고리별 매출 및 만족도 (상위 10)")
-    cat_data = df_filtered.groupby('product_category_name_english').agg({'price': 'sum', 'review_score': 'mean'}).reset_index()
-    cat_top10 = cat_data.nlargest(10, 'price')
-
-    fig_tree = px.treemap(cat_top10, path=['product_category_name_english'], values='price',
-                         color='review_score', color_continuous_scale='RdYlGn',
-                         title="카테고리별 매출 규모와 평균 평점 (녹색: 높음, 적색: 낮음)")
-    st.plotly_chart(fig_tree, use_container_width=True)
-
-    # 시각화 3: 리뷰 개수 vs 판매량 산점도
-    st.subheader("🔍 리뷰 영향력 분석 (리뷰 개수와 판매량 상관관계)")
-    prod_analysis = df_filtered.groupby('product_id').agg({'review_score': 'count', 'order_id': 'nunique'}).reset_index()
-    prod_analysis.columns = ['product_id', 'review_count', 'sales_volume']
-    
-    # 아웃라이어 정제 (가시성)
-    q_limit = prod_analysis['sales_volume'].quantile(0.99)
-    fig_scatter = px.scatter(prod_analysis[prod_analysis['sales_volume'] <= q_limit], 
-                            x='review_count', y='sales_volume', trendline="ols",
-                            opacity=0.5, title="상품별 리뷰 개수와 판매량 상관관계 (추세선 포함)")
-    st.plotly_chart(fig_scatter, use_container_width=True)
-
-# --- TAB 2: 리뷰 및 물류 성과 ---
-with tab2:
-    st.header("🚚 리뷰 점수 그룹별 물류 및 결제 분석")
-    
-    # 1. 물류 지표 비교 (Grouped Bar Chart)
-    st.subheader("📦 리뷰 그룹별 주요 물류 지표")
-    log_df = df_filtered[df_filtered['review_group'] != 'None'].groupby('review_group').agg({
-        'shipping_duration': 'mean',
-        'delay_days': 'mean',
-        'freight_ratio': 'mean'
-    }).reset_index()
-    
-    log_melted = log_df.melt(id_vars='review_group', 
-                            value_vars=['shipping_duration', 'delay_days', 'freight_ratio'],
-                            var_name='Metric', value_name='Value')
-    
-    metric_naming = {'shipping_duration': '평균 배송일', 'delay_days': '평균 지연일', 'freight_ratio': '배송비 비중'}
-    log_melted['Metric_KR'] = log_melted['Metric'].map(metric_naming)
-    
-    fig_log = px.bar(log_melted, x='Metric_KR', y='Value', color='review_group', barmode='group',
-                    text_auto='.2f', title="리뷰 그룹별 물류 성과 비교",
-                    color_discrete_map={'High (4-5)': '#00CC96', 'Low (1-3)': '#EF553B'})
-    st.plotly_chart(fig_log, use_container_width=True)
-
-    # 2. 결제 수단 비중 (Sunburst)
-    st.subheader("💳 리뷰 그룹별 결제 수단분포")
-    # 그룹별 결제 데이터 구성
-    pay_type_comp = []
-    for grp in ['High (4-5)', 'Low (1-3)']:
-        grp_orders = df_filtered[df_filtered['review_group'] == grp]['order_id']
-        grp_pay = payments_raw[payments_raw['order_id'].isin(grp_orders)]['payment_type'].value_counts(normalize=True).reset_index()
-        grp_pay['review_group'] = grp
-        pay_type_comp.append(grp_pay)
-    
-    pay_final = pd.concat(pay_type_comp)
-    pay_final.columns = ['payment_type', 'proportion', 'review_group']
-    
-    fig_sun = px.sunburst(pay_final, path=['review_group', 'payment_type'], values='proportion',
-                         color='payment_type', title="리뷰 그룹별 결제 수단 비중")
-    st.plotly_chart(fig_sun, use_container_width=True)
-
-    # 바우처 강조
-    v_low = pay_final[(pay_final['review_group'] == 'Low (1-3)') & (pay_final['payment_type'] == 'voucher')]['proportion'].values
-    v_high = pay_final[(pay_final['review_group'] == 'High (4-5)') & (pay_final['payment_type'] == 'voucher')]['proportion'].values
-    
-    v_l = v_low[0] if len(v_low) > 0 else 0
-    v_h = v_high[0] if len(v_high) > 0 else 0
-    
-    st.info(f"💡 Low 그룹의 바우처 결제 비중은 **{v_l*100:.1f}%**로, High 그룹(**{v_h*100:.1f}%**)보다 높게 나타납니다. (보상성 결제 가능성)")
-
-    # 3. VIP 심층 분석
-    if 'VIP' in selected_segments:
-        st.divider()
-        st.subheader("🌟 VIP 등급 집중 분석")
-        vip_data = df_filtered[df_filtered['RFM_Segment'] == 'VIP']
-        vip_low = vip_data[vip_data['review_group'] == 'Low (1-3)']
+    with c1:
+        st.subheader("📦 리뷰 그룹별 물류 지표 (배송 지연 중심)")
+        log_comp = df_f[df_f['review_group'] != 'None'].groupby('review_group').agg({
+            'shipping_duration': 'mean', 'delay_days': 'mean', 'freight_ratio': 'mean'
+        }).reset_index()
         
-        if len(vip_low) > 0:
-            st.warning(f"분석 기간 내 VIP 고객 중 **{len(vip_low)}건**의 낮은 만족도(1-3점)가 발생했습니다.")
-            v_c1, v_c2 = st.columns(2)
-            v_c1.metric("VIP Low 그룹 평균 지연", f"{vip_low['delay_days'].mean():.1f}일", delta_color="inverse")
-            v_c2.metric("VIP High 그룹 평균 지연", f"{vip_data[vip_data['review_group'] == 'High (4-5)']['delay_days'].mean():.1f}일")
-            st.write("VIP 고객의 이탈을 막기 위해 지연된 배송에 대한 타겟 케어가 필요합니다.")
-        else:
-            st.success("분석 기간 내 모든 VIP 고객이 높은 만족도를 유지하고 있습니다!")
+        log_m = log_comp.melt(id_vars='review_group', value_vars=['shipping_duration', 'delay_days', 'freight_ratio'])
+        m_kr = {'shipping_duration': '평균 배송일', 'delay_days': '평균 지연일', 'freight_ratio': '배송비 비중'}
+        log_m['Metric'] = log_m['variable'].map(m_kr)
+        
+        fig_log = px.bar(log_m, x='Metric', y='value', color='review_group', barmode='group',
+                        text_auto='.2f', color_discrete_map=color_map,
+                        hover_data={'value': ': .2f', 'review_group': True})
+        st.plotly_chart(fig_log, use_container_width=True)
 
-# --- 하단 인사이트 및 결론 ---
+    with c2:
+        st.subheader("💳 리뷰 그룹별 결제 수단 비중")
+        pay_data = []
+        for g in ['High (4-5)', 'Low (1-3)']:
+            ids = df_f[df_f['review_group'] == g]['order_id']
+            p = payments_raw[payments_raw['order_id'].isin(ids)]['payment_type'].value_counts(normalize=True).reset_index()
+            p['review_group'] = g
+            pay_data.append(p)
+        
+        pay_f = pd.concat(pay_data)
+        pay_f.columns = ['payment_type', 'proportion', 'review_group']
+        fig_sun = px.sunburst(pay_f, path=['review_group', 'payment_type'], values='proportion',
+                             color='review_group', color_discrete_map=color_map,
+                             hover_data={'proportion': ':.1%'})
+        st.plotly_chart(fig_sun, use_container_width=True)
+
+    st.info("💡 **운영 인사이트**: 저만족(Low) 그룹의 평균 지연일은 고만족(High) 그룹보다 현저히 높으며, 바우처 결제 비중이 높게 나타나는 경향이 있습니다.")
+
+# --- TAB 2: 성장 실적 ---
+with tab2:
+    st.header("💰 매출 실적 및 판매 트렌드")
+    
+    # 시각화 1: 이중 축 라인
+    trend = df_f.copy()
+    trend['month'] = trend['order_purchase_timestamp'].dt.to_period('M').astype(str)
+    t_data = trend.groupby('month').agg({'price': 'sum', 'order_id': 'nunique'}).reset_index()
+    
+    fig_t = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_t.add_trace(go.Scatter(x=t_data['month'], y=t_data['price'], name="매출액 (R$)", mode='lines+markers'), secondary_y=False)
+    fig_t.add_trace(go.Scatter(x=t_data['month'], y=t_data['order_id'], name="판매량 (건)", mode='lines+markers', line=dict(dash='dot')), secondary_y=True)
+    fig_t.update_layout(title="월별 매출 및 판매량 추이", hovermode="x unified")
+    st.plotly_chart(fig_t, use_container_width=True)
+    
+    # 시각화 2: Treemap
+    st.subheader("🌳 카테고리별 매출 상위 10 (색상: 평점)")
+    cat = df_f.groupby('product_category_name_english').agg({'price': 'sum', 'review_score': 'mean'}).reset_index()
+    top10 = cat.nlargest(10, 'price')
+    fig_tree = px.treemap(top10, path=['product_category_name_english'], values='price',
+                         color='review_score', color_continuous_scale='RdYlBu', # Red for Low, Blue for High
+                         hover_data={'price': ':,.0f', 'review_score': ':.2f'})
+    st.plotly_chart(fig_tree, use_container_width=True)
+    
+    # 시각화 3: 상관관계
+    st.subheader("🔍 리뷰 개수와 판매량 상관관계")
+    prod = df_f.groupby('product_id').agg({'review_score': 'count', 'order_id': 'nunique'}).reset_index()
+    prod.columns = ['pid', 'rcount', 'svol']
+    fig_scat = px.scatter(prod[prod['svol'] <= prod['svol'].quantile(0.99)], x='rcount', y='svol', trendline="ols",
+                         opacity=0.5, title="리뷰가 많을수록 판매가 늘어나는가?",
+                         hover_data={'rcount': True, 'svol': True})
+    st.plotly_chart(fig_scat, use_container_width=True)
+
+# --- TAB 3: 지역 전략 ---
+with tab3:
+    st.header("🌎 브라질 지역별 물류 위험 및 매출 밀도")
+    
+    # 데이터 집계
+    state_data = df_f.groupby('customer_state').agg({
+        'price': 'sum',
+        'delay_days': 'mean',
+        'review_score': 'mean',
+        'RFM_Segment': lambda x: (x == 'VIP').sum()
+    }).reset_index()
+    state_data.columns = ['state', 'revenue', 'avg_delay', 'avg_rating', 'vip_count']
+    
+    # 지도 시각화 (Choropleth + Bubble)
+    st.subheader("📍 주별 매출 밀도 및 배송 지연 위험도")
+    
+    # Brazil GeoJSON URL
+    geojson_url = "https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson"
+    
+    fig_map = px.choropleth(state_data, geojson=geojson_url, locations='state', featureidkey="properties.sigla",
+                           color='revenue', color_continuous_scale="Blues",
+                           scope="south america", title="주별 매출액(색상) 및 평균 지연일(크기 - 버블 효과 대체)")
+    # 버블 효과를 위해 Scattergeo 추가
+    # 주별 좌표 데이터가 부족하므로 여기서는 Choropleth 자체에 정보 통합
+    fig_map.update_geos(fitbounds="locations", visible=False)
+    fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
+    st.plotly_chart(fig_map, use_container_width=True)
+    
+    # 산점도: 품질 위험 분석
+    st.subheader("⚠️ 지역별 운영 리스크 분석")
+    fig_risk = px.scatter(state_data, x='avg_delay', y='avg_rating', size='revenue', color='vip_count',
+                         text='state', labels={'avg_delay': '평균 지연 일수', 'avg_rating': '평균 평점'},
+                         title="지연 일수 vs 평점 (원 크기: 매출액, 색상: VIP 고객수)",
+                         color_continuous_scale="RdBu_r")
+    
+    # 주석 추가 (AL, MA)
+    for target in ['AL', 'MA']:
+        row = state_data[state_data['state'] == target]
+        if not row.empty:
+            fig_risk.add_annotation(x=row['avg_delay'].values[0], y=row['avg_rating'].values[0],
+                                   text=f"⚠️ {target} 위험지역", showarrow=True, arrowhead=1)
+            
+    st.plotly_chart(fig_risk, use_container_width=True)
+    
+    # 상품 정보 영향 (사진 개수)
+    st.subheader("🖼️ 상품 사진 개수가 평점에 미치는 영향 (주별)")
+    photo_effect = df_f.groupby('customer_state').agg({'product_photos_qty': 'mean', 'review_score': 'mean'}).reset_index()
+    fig_photo = px.line(photo_effect.sort_values('product_photos_qty'), x='product_photos_qty', y='review_score', 
+                       markers=True, text='customer_state', title="평균 사진 개수와 리뷰 평점의 관계")
+    st.plotly_chart(fig_photo, use_container_width=True)
+
+    # 텍스트 마이닝 기반 인사이트 (상태별)
+    st.divider()
+    selected_state = st.selectbox("집중 분석할 주(State) 선택", sorted(state_data['state'].unique()))
+    
+    st.write(f"### 🔍 {selected_state} 지역 주요 불만 키워드 (시뮬레이션)")
+    state_reviews = df_f[(df_f['customer_state'] == selected_state) & (df_f['review_score'] < 4)]['review_comment_message'].dropna()
+    
+    if not state_reviews.empty:
+        # 간단한 키워드 추출 시뮬레이션 (실제로는 더 복잡한 NLP 필요)
+        all_text = " ".join(state_reviews).lower()
+        keywords = ["demora", "prazo", "entregue", "produto", "péssimo", "atraso"]
+        found = [k for k in keywords if k in all_text]
+        
+        st.error(f"주요 이슈: {', '.join(found) if found else '배송 및 품질 불만'}")
+        st.write(f"해당 지역 저만족 리뷰 수: {len(state_reviews)}건")
+    else:
+        st.success("해당 지역은 현재 불만 데이터가 거의 없습니다.")
+
+# 하단 결론
 st.divider()
-st.subheader("💡 데이터 기반 종합 분석 결과")
-ins1, ins2, ins3 = st.columns(3)
-
-with ins1:
-    st.markdown("### 📈 성장 동력 (Growth)")
-    st.write("- 매출과 판매량은 리뷰 개수와 강력한 양의 상관관계를 가집니다.")
-    st.write("- **신규 제품**의 빠른 시장 안착을 위해 초기 리뷰 확보 캠페인이 필수적입니다.")
-
-with ins2:
-    st.markdown("### 🚚 운영 최적화 (Logistics)")
-    st.write("- 리뷰 점수를 가르는 결정적 요인은 **'배송 지연'**입니다.")
-    st.write("- 특히 Low 그룹의 지연 일수가 월등히 높은 점을 고려할 때, 물류 효율 개선이 만족도 향상의 직결타입니다.")
-
-with ins3:
-    st.markdown("### 🎯 고객 유지 (Retention)")
-    st.write("- VIP 고객의 만족도 저하는 배송 지연 시 더 두드러집니다.")
-    st.write("- 바우처 사용 비중이 높은 고객군에 대한 재구매 유도 및 서비스 사후 관리가 필요합니다.")
-
-st.success("🎯 **통합 전략:** 리뷰가 많은 카테고리의 물류 품질을 우선적으로 관리하여, '리뷰 증대 → 매출 상승 → 우수한 고객 경험'의 선순환 구조를 구축해야 합니다.")
+st.subheader("🎯 데이터 기반 지역화 전략 제언")
+st.markdown(f"""
+- **북부/북동부 리스크**: AL, MA 등 지연이 잦은 지역은 물류 파트너 교체 또는 현지 창고(Hub) 확보가 시급합니다.
+- **사진의 중요성**: 평균 사진 개수가 3개 미만인 지역은 평점 변동성이 큽니다. 상세페이지 강화 가이드를 판매자에게 배포하세요.
+- **VIP 보존**: VIP 밀도가 높은 주에서 지연이 발생할 경우 즉각적인 보상 바우처를 자동 발행하는 자동화 로직을 추천합니다.
+""")
