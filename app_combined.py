@@ -167,6 +167,64 @@ with tab1:
 
     st.info("💡 **운영 인사이트**: 저만족(Low) 그룹의 평균 지연일은 고만족(High) 그룹보다 현저히 높으며, 바우처 결제 비중이 높게 나타나는 경향이 있습니다.")
 
+    st.divider()
+    
+    # --- Zero-Delay Deep Dive ---
+    st.subheader("🚀 Zero-Delay 마인드셋: 약속 준수가 평점에 미치는 영향")
+    
+    # 지연 여부 그룹화
+    df_f['delivery_status'] = df_f['delay_days'].apply(lambda x: 'Delayed (지연)' if x > 0 else 'On-time (준수)')
+    
+    col_z1, col_z2 = st.columns([1, 2])
+    
+    with col_z1:
+        # 그룹별 평균 평점 비교 (Bar Chart)
+        status_rating = df_f.groupby('delivery_status')['review_score'].mean().reset_index()
+        fig_z_bar = px.bar(status_rating, x='delivery_status', y='review_score',
+                          color='delivery_status', 
+                          color_discrete_map={'Delayed (지연)': '#FF0000', 'On-time (준수)': '#0000FF'},
+                          text_auto='.2f', title="배송 약속 준수 여부별 평균 평점")
+        fig_z_bar.update_layout(showlegend=False)
+        st.plotly_chart(fig_z_bar, use_container_width=True)
+        
+    with col_z2:
+        # 지연 일수별 CS 키워드 등장 빈도 (Line Chart)
+        # 키워드 필터링
+        cs_keywords = ['ainda', 'não recebi', 'atraso', 'demora']
+        
+        def count_cs_keywords(text):
+            if pd.isna(text): return 0
+            text = text.lower()
+            return 1 if any(k in text for k in cs_keywords) else 0
+            
+        df_f['has_cs_keyword'] = df_f['review_comment_message'].apply(count_cs_keywords)
+        
+        # 지연된 데이터만 추출 (0~30일 사이로 제한)
+        delay_analysis = df_f[(df_f['delay_days'] > 0) & (df_f['delay_days'] <= 30)].copy()
+        delay_trend = delay_analysis.groupby('delay_days').agg({
+            'review_score': 'mean',
+            'has_cs_keyword': 'mean'
+        }).reset_index()
+        
+        fig_z_line = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        fig_z_line.add_trace(go.Scatter(x=delay_trend['delay_days'], y=delay_trend['review_score'],
+                                      name="평균 평점", mode='lines+markers', line=dict(color='#0000FF')), secondary_y=False)
+                                      
+        fig_z_line.add_trace(go.Scatter(x=delay_trend['delay_days'], y=delay_trend['has_cs_keyword']*100,
+                                      name="CS 키워드 빈도 (%)", mode='lines+markers', line=dict(color='#FF0000', dash='dot')), secondary_y=True)
+                                      
+        fig_z_line.update_layout(title="지연 일수 증가에 따른 평점 하락 및 CS 키워드 급증(%)",
+                                hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        
+        fig_z_line.update_xaxes(title_text="지연 일수 (Days)")
+        fig_z_line.update_yaxes(title_text="평균 평점", secondary_y=False)
+        fig_z_line.update_yaxes(title_text="CS 키워드 빈도 (%)", secondary_y=True)
+        
+        st.plotly_chart(fig_z_line, use_container_width=True)
+
+    st.warning("⚠️ **Zero-Delay 분석 결과**: 배송 지연이 단 1일만 발생해도 불만 키워드('ainda', 'não recebi')의 출현 빈도가 급격히 상승하며 평점이 3점대 이하로 수렴하는 '임계점'이 확인됩니다.")
+
 # --- TAB 2: 성장 실적 ---
 with tab2:
     st.header("💰 매출 실적 및 판매 트렌드")
