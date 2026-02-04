@@ -147,6 +147,8 @@ with tab1:
         fig_log = px.bar(log_m, x='Metric', y='value', color='review_group', barmode='group',
                         text_auto='.2f', color_discrete_map=color_map,
                         hover_data={'value': ': .2f', 'review_group': True})
+        fig_log.update_layout(annotations=[dict(text="출처: Olist_orders, Olist_order_items, Olist_order_reviews", 
+                                                xref="paper", yref="paper", x=1, y=-0.2, showarrow=False, font=dict(size=10, color="gray"))])
         st.plotly_chart(fig_log, use_container_width=True)
 
     with c2:
@@ -163,6 +165,8 @@ with tab1:
         fig_sun = px.sunburst(pay_f, path=['review_group', 'payment_type'], values='proportion',
                              color='review_group', color_discrete_map=color_map,
                              hover_data={'proportion': ':.1%'})
+        fig_sun.update_layout(annotations=[dict(text="출처: Olist_order_payments, Olist_order_reviews", 
+                                                xref="paper", yref="paper", x=1, y=-0.1, showarrow=False, font=dict(size=10, color="gray"))])
         st.plotly_chart(fig_sun, use_container_width=True)
 
     st.info("💡 **운영 인사이트**: 저만족(Low) 그룹의 평균 지연일은 고만족(High) 그룹보다 현저히 높으며, 바우처 결제 비중이 높게 나타나는 경향이 있습니다.")
@@ -184,7 +188,9 @@ with tab1:
                           color='delivery_status', 
                           color_discrete_map={'Delayed (지연)': '#FF0000', 'On-time (준수)': '#0000FF'},
                           text_auto='.2f', title="배송 약속 준수 여부별 평균 평점")
-        fig_z_bar.update_layout(showlegend=False)
+        fig_z_bar.update_layout(showlegend=False, 
+                               annotations=[dict(text="출처: Olist_orders, Olist_order_reviews", 
+                                                xref="paper", yref="paper", x=1, y=-0.2, showarrow=False, font=dict(size=10, color="gray"))])
         st.plotly_chart(fig_z_bar, use_container_width=True)
         
     with col_z2:
@@ -221,6 +227,8 @@ with tab1:
         fig_z_line.update_yaxes(title_text="평균 평점", secondary_y=False)
         fig_z_line.update_yaxes(title_text="CS 키워드 빈도 (%)", secondary_y=True)
         
+        fig_z_line.add_annotation(text="출처: Olist_orders, Olist_order_reviews", 
+                                 xref="paper", yref="paper", x=1, y=-0.15, showarrow=False, font=dict(size=10, color="gray"))
         st.plotly_chart(fig_z_line, use_container_width=True)
 
     st.warning("⚠️ **Zero-Delay 분석 결과**: 배송 지연이 단 1일만 발생해도 불만 키워드('ainda', 'não recebi')의 출현 빈도가 급격히 상승하며 평점이 3점대 이하로 수렴하는 '임계점'이 확인됩니다.")
@@ -238,6 +246,8 @@ with tab2:
     fig_t.add_trace(go.Scatter(x=t_data['month'], y=t_data['price'], name="매출액 (R$)", mode='lines+markers'), secondary_y=False)
     fig_t.add_trace(go.Scatter(x=t_data['month'], y=t_data['order_id'], name="판매량 (건)", mode='lines+markers', line=dict(dash='dot')), secondary_y=True)
     fig_t.update_layout(title="월별 매출 및 판매량 추이", hovermode="x unified")
+    fig_t.add_annotation(text="출처: Olist_orders, Olist_order_items", 
+                        xref="paper", yref="paper", x=1, y=-0.15, showarrow=False, font=dict(size=10, color="gray"))
     st.plotly_chart(fig_t, use_container_width=True)
     
     # 시각화 2: Treemap
@@ -247,6 +257,8 @@ with tab2:
     fig_tree = px.treemap(top10, path=['product_category_name_english'], values='price',
                          color='review_score', color_continuous_scale='RdYlBu', # Red for Low, Blue for High
                          hover_data={'price': ':,.0f', 'review_score': ':.2f'})
+    fig_tree.update_layout(annotations=[dict(text="출처: Olist_products, Olist_order_items, Olist_order_reviews", 
+                                                 xref="paper", yref="paper", x=1, y=-0.05, showarrow=False, font=dict(size=10, color="gray"))])
     st.plotly_chart(fig_tree, use_container_width=True)
     
     # 시각화 3: 상관관계
@@ -256,6 +268,8 @@ with tab2:
     fig_scat = px.scatter(prod[prod['svol'] <= prod['svol'].quantile(0.99)], x='rcount', y='svol', trendline="ols",
                          opacity=0.5, title="리뷰가 많을수록 판매가 늘어나는가?",
                          hover_data={'rcount': True, 'svol': True})
+    fig_scat.update_layout(annotations=[dict(text="출처: Olist_order_items, Olist_order_reviews", 
+                                                 xref="paper", yref="paper", x=1, y=-0.15, showarrow=False, font=dict(size=10, color="gray"))])
     st.plotly_chart(fig_scat, use_container_width=True)
 
 # --- TAB 3: 지역 전략 ---
@@ -283,7 +297,9 @@ with tab3:
     # 버블 효과를 위해 Scattergeo 추가
     # 주별 좌표 데이터가 부족하므로 여기서는 Choropleth 자체에 정보 통합
     fig_map.update_geos(fitbounds="locations", visible=False)
-    fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0})
+    fig_map.update_layout(margin={"r":0,"t":40,"l":0,"b":0},
+                          annotations=[dict(text="출처: Olist_orders, Olist_customers, Olist_order_items", 
+                                           xref="paper", yref="paper", x=1, y=0.01, showarrow=False, font=dict(size=10, color="gray"))])
     st.plotly_chart(fig_map, use_container_width=True)
     
     # 산점도: 품질 위험 분석
@@ -300,6 +316,8 @@ with tab3:
             fig_risk.add_annotation(x=row['avg_delay'].values[0], y=row['avg_rating'].values[0],
                                    text=f"⚠️ {target} 위험지역", showarrow=True, arrowhead=1)
             
+    fig_risk.update_layout(annotations=[dict(text="출처: Olist_orders, Olist_order_reviews", 
+                                                 xref="paper", yref="paper", x=1, y=-0.15, showarrow=False, font=dict(size=10, color="gray"))])
     st.plotly_chart(fig_risk, use_container_width=True)
     
     # 상품 정보 영향 (사진 개수)
@@ -307,6 +325,8 @@ with tab3:
     photo_effect = df_f.groupby('customer_state').agg({'product_photos_qty': 'mean', 'review_score': 'mean'}).reset_index()
     fig_photo = px.line(photo_effect.sort_values('product_photos_qty'), x='product_photos_qty', y='review_score', 
                        markers=True, text='customer_state', title="평균 사진 개수와 리뷰 평점의 관계")
+    fig_photo.update_layout(annotations=[dict(text="출처: Olist_products, Olist_order_reviews, Olist_customers", 
+                                                  xref="paper", yref="paper", x=1, y=-0.15, showarrow=False, font=dict(size=10, color="gray"))])
     st.plotly_chart(fig_photo, use_container_width=True)
 
     # 텍스트 마이닝 기반 인사이트 (상태별)
@@ -375,7 +395,9 @@ with tab4:
         fig_high = px.bar(top10_high, x='count', y='category', orientation='h', 
                           title="고만족 그룹(4-5점) Top 10 카테고리",
                           color_discrete_sequence=['#0000FF'])
-        fig_high.update_layout(yaxis={'categoryorder':'total ascending'})
+        fig_high.update_layout(yaxis={'categoryorder':'total ascending'},
+                               annotations=[dict(text="출처: Olist_products, Olist_order_reviews", 
+                                                xref="paper", yref="paper", x=1, y=-0.2, showarrow=False, font=dict(size=10, color="gray"))])
         st.plotly_chart(fig_high, use_container_width=True)
         
     with c2:
@@ -384,7 +406,9 @@ with tab4:
         fig_low = px.bar(top10_low, x='count', y='category', orientation='h', 
                          title="저만족 그룹(1-3점) Top 10 카테고리",
                          color_discrete_sequence=['#FF0000'])
-        fig_low.update_layout(yaxis={'categoryorder':'total ascending'})
+        fig_low.update_layout(yaxis={'categoryorder':'total ascending'},
+                              annotations=[dict(text="출처: Olist_products, Olist_order_reviews", 
+                                               xref="paper", yref="paper", x=1, y=-0.2, showarrow=False, font=dict(size=10, color="gray"))])
         st.plotly_chart(fig_low, use_container_width=True)
 
     st.divider()
@@ -405,6 +429,8 @@ with tab4:
     fig_bubble = px.scatter(cat_stats, x='avg_photos', y='avg_review', size='order_count', color='category',
                             hover_name='category', labels={'avg_photos': '평균 상품 사진 개수', 'avg_review': '평균 평점'},
                             title="카테고리별 사진 등록 수 vs 평균 평점 (원 크기: 주문량)")
+    fig_bubble.update_layout(annotations=[dict(text="출처: Olist_products, Olist_order_reviews, Olist_order_items", 
+                                                   xref="paper", yref="paper", x=1, y=-0.15, showarrow=False, font=dict(size=10, color="gray"))])
     st.plotly_chart(fig_bubble, use_container_width=True)
     
     st.divider()
