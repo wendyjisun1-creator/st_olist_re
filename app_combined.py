@@ -124,7 +124,7 @@ st.title("🇧🇷 Olist 비즈니스 통합 전략 대시보드")
 st.markdown("매출 성장, 운영 효율, 그리고 지역별 위험 요소를 통합적으로 분석합니다.")
 
 # 탭 구성
-tab1, tab2, tab3, tab4 = st.tabs(["📊 운영 모니터링", "📈 성장 실적", "🗺️ 지역 전략", "🎯 카테고리 분석"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 운영 모니터링", "📈 성장 실적", "🗺️ 지역 전략", "🎯 카테고리 분석", "🧠 카노 모델 분석"])
 
 # 색상 팔레트 고정 (Low: Red, High: Blue)
 color_map = {'High (4-5)': '#0000FF', 'Low (1-3)': '#FF0000'}
@@ -482,3 +482,99 @@ with tab4:
         """)
 
     st.success("🎯 **종합 결론**: 카테고리의 물류 성격에 따라 **'사진을 통한 기대치 관리'**와 **'배송 준수 후 재구매 마케팅'**으로 전략을 이원화해야 합니다.")
+
+# --- TAB 5: 카노 모델 분석 ---
+with tab5:
+    st.header("🧠 카노 모델(Kano Model) 기반 고객 만족 구조 분석")
+    st.markdown("""
+    고객의 만족은 단순히 '더 많은 기능'에서 오지 않습니다. 
+    **당연적 품질(Must-be)**은 결핍 시 불만이 폭발하고, **매력적 품질(Attractive)**은 충족 시 감동을 줍니다.
+    """)
+    
+    col_k1, col_k2 = st.columns(2)
+    
+    # 1. 당연적 품질 (Must-be Quality): 배송 지연
+    with col_k1:
+        st.subheader("🚨 당연적 품질: 배송 지연")
+        st.write("*(지연이 발생하면 평점은 수직 낙하합니다)*")
+        
+        # 지연 일수별 평점 (정상 배송 ~ 20일 지연까지 집중 분석)
+        must_be_df = df_f[(df_f['delay_days'] >= 0) & (df_f['delay_days'] <= 20)].groupby('delay_days')['review_score'].mean().reset_index()
+        
+        fig_must = px.line(must_be_df, x='delay_days', y='review_score', 
+                          markers=True, line_shape='linear',
+                          title="배송 지연(당연적 품질 결핍)과 평점 하락",
+                          color_discrete_sequence=['#FF0000'])
+        
+        # 0일 지연 강조
+        fig_must.add_vline(x=0, line_dash="dash", line_color="gray")
+        fig_must.add_annotation(x=0, y=must_be_df['review_score'].iloc[0], text="배송 약속일 (골든 타임)", showarrow=True)
+        
+        fig_must.update_layout(xaxis_title="지연 일수 (Days)", yaxis_title="평균 평점",
+                              annotations=[dict(text="출처: Olist_orders, Olist_order_reviews", 
+                                               xref="paper", yref="paper", x=1, y=-0.2, showarrow=False, font=dict(size=10, color="gray"))])
+        st.plotly_chart(fig_must, use_container_width=True)
+        
+    # 2. 매력적 품질 (Attractive Quality): 상품 사진
+    with col_k2:
+        st.subheader("✨ 매력적 품질: 상품 사진")
+        st.write("*(사진이 많으면 만족도가 서서히 상승합니다)*")
+        
+        # 사진 개수별 평점 (0~10장까지)
+        attr_df = df_f[df_f['product_photos_qty'] <= 10].groupby('product_photos_qty')['review_score'].mean().reset_index()
+        
+        fig_attr = px.line(attr_df, x='product_photos_qty', y='review_score', 
+                          markers=True, line_shape='linear',
+                          title="사진 개수(매력적 품질 충족)와 평점 상승",
+                          color_discrete_sequence=['#0000FF'])
+        
+        fig_attr.update_layout(xaxis_title="상품 사진 개수 (Qty)", yaxis_title="평균 평점",
+                              annotations=[dict(text="출처: Olist_products, Olist_order_reviews", 
+                                               xref="paper", yref="paper", x=1, y=-0.2, showarrow=False, font=dict(size=10, color="gray"))])
+        st.plotly_chart(fig_attr, use_container_width=True)
+
+    st.divider()
+
+    # 3. 결과 대조 분석 (기울기 비교 및 전략적 시사점)
+    st.subheader("⚖️ CX 전략 대조: 방어(지연 방지) vs 공격(사진 홍보)")
+    
+    # 간단한 기울기 계산 (시각적 비교용)
+    must_drop = must_be_df['review_score'].iloc[0] - must_be_df['review_score'].iloc[-1]
+    attr_gain = attr_df['review_score'].iloc[-1] - attr_df['review_score'].iloc[0]
+    ratio = must_drop / (attr_gain if attr_gain != 0 else 0.1)
+    
+    c_res1, c_res2 = st.columns([1, 1])
+    
+    with c_res1:
+        st.metric("배송 지연 시 평점 하락폭 (방어 실패)", f"-{must_drop:.2f} pt")
+        st.metric("사진 10장 추가 시 평점 상승폭 (공격 성공)", f"+{attr_gain:.2f} pt")
+        
+    with c_res2:
+        st.warning(f"### 💡 분석 결과: 방어의 힘이 약 {ratio:.1f}배 더 강력합니다!")
+        st.markdown(f"""
+        - **당연적 품질(배송)**: 약속 준수는 '기본'입니다. 며칠만 늦어도 평점이 수직 낙하하며 고객은 이탈합니다.
+        - **매력적 품질(사진)**: 사진은 고객을 즐겁게 하지만, 배송이 늦어지면 사진으로 쌓은 감동은 순식간에 사라집니다.
+        - **핵심 전략**: **'공격적인 마케팅(사진)'보다 '완벽한 방어(지연 제로)'가 VIP 고객 유지율을 결정짓는 핵심 요소입니다.**
+        """)
+
+    # 4. VIP 고객 심화 분석
+    st.divider()
+    st.subheader("💎 VIP 고객은 '약속 결핍'에 얼마나 더 민감한가?")
+    
+    vip_vs_all = df_all.groupby(['RFM_Segment', df_all['delay_days'] > 0]).agg({'review_score': 'mean'}).reset_index()
+    vip_vs_all.columns = ['Segment', 'Is_Delayed', 'Avg_Rating']
+    vip_vs_all['Status'] = vip_vs_all['Is_Delayed'].map({True: '지연 발생', False: '정시 배송'})
+    
+    fig_vip = px.bar(vip_vs_all, x='Segment', y='Avg_Rating', color='Status', barmode='group',
+                    text_auto='.2f', title="고객 세그먼트별 배송 지연에 따른 평점 타격 정도",
+                    color_discrete_map={'지연 발생': '#FF0000', '정시 배송': '#0000FF'})
+    
+    fig_vip.update_layout(annotations=[dict(text="출처: Olist_orders, Olist_customers, Olist_order_reviews", 
+                                           xref="paper", yref="paper", x=1, y=-0.15, showarrow=False, font=dict(size=10, color="gray"))])
+    st.plotly_chart(fig_vip, use_container_width=True)
+    
+    st.info("""
+    **VIP 고객 인사이트**: VIP 고객은 일반 고객보다 '정시 배송'에 대한 기대치가 높으며, 
+    지연 발생 시 평점 하락 폭이 더 크거나 재구매 의사가 급격히 꺾이는 경향을 보입니다. 
+    VIP 고객에게는 전용 물류 라인이나 우선 배송 혜택이 필수적입니다.
+    """)
