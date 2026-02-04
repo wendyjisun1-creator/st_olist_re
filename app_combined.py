@@ -124,7 +124,7 @@ st.title("🇧🇷 Olist 비즈니스 통합 전략 대시보드")
 st.markdown("매출 성장, 운영 효율, 그리고 지역별 위험 요소를 통합적으로 분석합니다.")
 
 # 탭 구성
-tab1, tab2, tab3 = st.tabs(["📊 운영 모니터링", "📈 성장 실적", "🗺️ 지역 전략"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 운영 모니터링", "📈 성장 실적", "🗺️ 지역 전략", "🎯 카테고리 분석"])
 
 # 색상 팔레트 고정 (Low: Red, High: Blue)
 color_map = {'High (4-5)': '#0000FF', 'Low (1-3)': '#FF0000'}
@@ -356,3 +356,103 @@ st.table(df_conclusion)
 st.divider()
 st.subheader("💡 딱 한 줄 요약")
 st.success("🎯 **\"배송 약속을 칼같이 지키고, 좋은 사진으로 첫 리뷰 50개를 빨리 모으는 것\"**이 매출 상승의 가장 쉬운 지름길입니다!")
+
+# --- TAB 4: 카테고리 분석 ---
+with tab4:
+    st.header("🎯 카테고리별 고객 경험(CX) 자가 진단")
+    
+    # 1. 리뷰 점수 그룹별 카테고리 분포 (Top 10)
+    st.subheader("📊 만족도 점수 그룹별 Top 10 카테고리 비교")
+    c1, c2 = st.columns(2)
+    
+    # 데이터 필터링 (High vs Low)
+    df_high = df_f[df_f['review_group'] == 'High (4-5)']
+    df_low = df_f[df_f['review_group'] == 'Low (1-3)']
+    
+    with c1:
+        top10_high = df_high['product_category_name_english'].value_counts().nlargest(10).reset_index()
+        top10_high.columns = ['category', 'count']
+        fig_high = px.bar(top10_high, x='count', y='category', orientation='h', 
+                          title="고만족 그룹(4-5점) Top 10 카테고리",
+                          color_discrete_sequence=['#0000FF'])
+        fig_high.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_high, use_container_width=True)
+        
+    with c2:
+        top10_low = df_low['product_category_name_english'].value_counts().nlargest(10).reset_index()
+        top10_low.columns = ['category', 'count']
+        fig_low = px.bar(top10_low, x='count', y='category', orientation='h', 
+                         title="저만족 그룹(1-3점) Top 10 카테고리",
+                         color_discrete_sequence=['#FF0000'])
+        fig_low.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_low, use_container_width=True)
+
+    st.divider()
+    
+    # 2. 버블 차트: 사진 개수 vs 평점 vs 빈도
+    st.subheader("🔍 사진 개수와 만족도의 상관관계 (카테고리별)")
+    
+    cat_stats = df_f.groupby('product_category_name_english').agg({
+        'review_score': 'mean',
+        'product_photos_qty': 'mean',
+        'order_id': 'count'
+    }).reset_index()
+    cat_stats.columns = ['category', 'avg_review', 'avg_photos', 'order_count']
+    
+    # 가시성을 위해 빈도가 너무 낮은 카테고리 제외 (예: 상위 30개만 표시하거나 최소 주문수 설정)
+    cat_stats = cat_stats[cat_stats['order_count'] > 50] 
+    
+    fig_bubble = px.scatter(cat_stats, x='avg_photos', y='avg_review', size='order_count', color='category',
+                            hover_name='category', labels={'avg_photos': '평균 상품 사진 개수', 'avg_review': '평균 평점'},
+                            title="카테고리별 사진 등록 수 vs 평균 평점 (원 크기: 주문량)")
+    st.plotly_chart(fig_bubble, use_container_width=True)
+    
+    st.divider()
+    
+    # 3. '물류 민감' vs '만족도 안정' 비교 섹션
+    st.subheader("⚖️ 카테고리 성격 분석: 물류 민감형 vs 만족도 안정형")
+    
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.error("### 🚨 물류 민감 카테고리 (위험)")
+        st.markdown("""
+        - **대표 품목**: 가구(Furniture), 대형가전, 침구류
+        - **특징**: 배송비 비중이 높고, 파손 위험 및 배송 지연에 매우 민감함.
+        - **데이터 징후**: 사진 개수가 적을수록 '기대와 다름' 리뷰가 속출함.
+        """)
+        
+    with col_b:
+        st.success("### 🚀 만족도 안정 카테고리 (기회)")
+        st.markdown("""
+        - **대표 품목**: 패션, 화장품, 소모품, 장난감
+        - **특징**: 배송 약속만 지켜지면 5점 확보가 용이함.
+        - **데이터 징후**: 'On-time' 배송 시 평점이 4.5 이상 유지됨.
+        """)
+
+    st.divider()
+
+    # 4. 신규 판매자 가이드를 위한 최종 결론 (Action Plan)
+    st.subheader("💡 신규 판매자 가이드를 위한 최종 결론 (Action Plan)")
+    
+    c_plan1, c_plan2 = st.columns(2)
+    
+    with c_plan1:
+        st.info("✅ **[가이드 A] '위험 카테고리' 판매자라면 (가구, 대형가전 등)**")
+        st.markdown("""
+        > **\"배송비를 상품가에 녹이고, 사진에 집착하세요.\"**
+        
+        - **전략**: 배송비가 비싸면 평점이 깎입니다. 차라리 배송비를 낮게 책정하고 상품가를 조정하는 전략이 유리합니다.
+        - **실행**: 제품의 실물 크기와 질감을 느낄 수 있는 사진을 **최소 8장 이상** 등록하여 고객의 '근거 없는 기대'를 사전에 차단하세요.
+        """)
+        
+    with c_plan2:
+        st.info("✅ **[가이드 B] '기회 카테고리' 판매자라면 (소모품, 패션 등)**")
+        st.markdown("""
+        > **\"첫 배송이 곧 다음 달 매출입니다.\"**
+        
+        - **전략**: 이 카테고리는 배송만 약속대로 가면 5점을 받기 쉽습니다. 5점을 받은 고객은 평균 78일 안에 다시 돌아옵니다.
+        - **실행**: 재구매 주기를 고려해 첫 구매 고객에게 **60일 시점에 재방문 쿠폰**을 발행하는 마케팅을 필수적으로 병행하세요.
+        """)
+
+    st.success("🎯 **종합 결론**: 카테고리의 물류 성격에 따라 **'사진을 통한 기대치 관리'**와 **'배송 준수 후 재구매 마케팅'**으로 전략을 이원화해야 합니다.")
