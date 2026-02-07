@@ -333,19 +333,29 @@ with tab3:
     st.divider()
     selected_state = st.selectbox("집중 분석할 주(State) 선택", sorted(state_data['state'].unique()))
     
-    st.write(f"### 🔍 {selected_state} 지역 주요 불만 키워드 (시뮬레이션)")
+    st.write(f"### 🔍 {selected_state} 지역 주요 불만 키워드 분석")
+    st.caption("※ 저만족 리뷰 분석 기준: 별점 1~3점에 해당하는 리뷰 메시지 기반 (평균 별점 4점 미만)")
+    
     state_reviews = df_f[(df_f['customer_state'] == selected_state) & (df_f['review_score'] < 4)]['review_comment_message'].dropna()
     
     if not state_reviews.empty:
-        # 간단한 키워드 추출 시뮬레이션 (실제로는 더 복잡한 NLP 필요)
-        all_text = " ".join(state_reviews).lower()
-        keywords = ["demora", "prazo", "entregue", "produto", "péssimo", "atraso"]
-        found = [k for k in keywords if k in all_text]
+        # 키워드 및 한글 번역 사전
+        translations = {
+            "demora": "지연/느림",
+            "prazo": "기한/약속일",
+            "entregue": "배송됨/수령",
+            "produto": "상품/제품",
+            "péssimo": "최악(매우 나쁨)",
+            "atraso": "늦음/연체"
+        }
         
-        st.error(f"주요 이슈: {', '.join(found) if found else '배송 및 품질 불만'}")
-        st.write(f"해당 지역 저만족 리뷰 수: {len(state_reviews)}건")
+        all_text = " ".join(state_reviews).lower()
+        found = [f"{k}({translations[k]})" for k in translations.keys() if k in all_text]
+        
+        st.error(f"주요 이슈(포르투갈어 및 번역): {', '.join(found) if found else '배송 및 물류 품질 불만'}")
+        st.write(f"해당 지역 저만족 리뷰 분석 건수: {len(state_reviews):,}건")
     else:
-        st.success("해당 지역은 현재 불만 데이터가 거의 없습니다.")
+        st.success("해당 지역은 현재 분석 가능한 불만 데이터가 거의 없습니다.")
 
 # 하단 결론
 st.divider()
